@@ -14,7 +14,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix: { shard: [0, 1, 2] }
-    concurrency: { group: shopify-catalogue-${{ matrix.shard }}, cancel-in-progress: false }
+    concurrency:
+      group: "shopify-catalogue-${{ matrix.shard }}"
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
