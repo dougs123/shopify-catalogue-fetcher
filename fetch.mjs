@@ -38,7 +38,8 @@ export async function run(cfg = {}) {
 
   const stats = { stores: 0, ok: 0, other: {}, products: 0 };
   while (Date.now() < deadline - 5 * 60e3) {
-    const wr = await api('/ext/work?n=10');
+    const SHARD = +(process.env.SHARD || 0), OF = +(process.env.SHARDS || 1);
+    const wr = await api(`/ext/work?n=10&shard=${SHARD}&of=${OF}`);
     if (!wr.ok) throw new Error(`work ${wr.status} ${await wr.text()}`);
     const { date, work, barcode_cap: cap } = await wr.json();
     if (!work.length) { log('no work left for', date); break; }
@@ -92,7 +93,7 @@ export async function fetchStore(w, cap, { shop, MAX_PAGES = 80, log = () => {},
     if (r.status !== 200) { if (r.status === 429) break; continue; }
     try { for (const v of (await r.json())?.product?.variants || []) barcodes[v.id] = v.barcode ?? null; fetched++; } catch {}
   }
-  return { status: 'ok', origin, products, currency, country, barcodes, gtin_fetched: fetched, pages: page, http };
+  return { status: 'ok', origin, products, currency, country, barcodes, gtin_fetched: fetched, pages: page, http, market_pinned: !!cookie };
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
