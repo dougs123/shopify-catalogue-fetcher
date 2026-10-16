@@ -20,12 +20,12 @@ export async function run(cfg = {}) {
 
   // one global pace across every store (Shopify limits per client IP platform-wide)
   let nextAt = 0;
-  async function shop(url) {
+  async function shop(url, cookie) {
     for (let attempt = 0; ; attempt++) {
       const wait = nextAt - Date.now(); nextAt = Math.max(Date.now(), nextAt) + GAP;
       if (wait > 0) await sleep(wait);
       let r;
-      try { r = await fetch(url, { headers: { 'user-agent': UA, accept: 'application/json' }, redirect: 'follow', signal: AbortSignal.timeout(25000) }); }
+      try { r = await fetch(url, { headers: { 'user-agent': UA, accept: 'application/json', ...(cookie ? { cookie } : {}) }, redirect: 'follow', signal: AbortSignal.timeout(25000) }); }
       catch (e) { if (attempt < 2) { await sleep(5000); continue; } return { status: 0, error: String(e) }; }
       if ((r.status === 429 || r.status >= 500) && attempt < 3) {
         const ra = Math.min(Math.max(+(r.headers.get('retry-after') || 0), 30 * (attempt + 1)), 300);
@@ -64,9 +64,10 @@ export async function fetchStore(w, cap, { shop, MAX_PAGES = 80, log = () => {},
     try { const mj = await m.json(); currency = mj.currency || currency; country = mj.country || null; published = mj.published_products_count ?? null; } catch {}
     try { origin = new URL(m.url).origin; } catch {}
   }
+  const cookie = country && currency ? `localization=${country}; cart_currency=${currency}` : undefined;
   const products = []; let page = 1, http = null;
   for (; page <= MAX_PAGES; page++) {
-    const r = await shop(`${origin}/products.json?limit=250&page=${page}`);
+    const r = await shop(`${origin}/products.json?limit=250&page=${page}`, cookie);
     http = r.status;
     if (r.status === 429 || r.status >= 500 || r.status === 0) return { status: 'retry', http, pages: page - 1, error: `HTTP ${r.status} on page ${page}`, currency, country };
     if (r.status >= 400) { if (page === 1) return { status: 'blocked', http, error: `HTTP ${r.status}`, currency, country }; break; }
@@ -87,7 +88,7 @@ export async function fetchStore(w, cap, { shop, MAX_PAGES = 80, log = () => {},
   for (const p of products) {
     if (fetched >= cap || Date.now() > deadline - 60e3) break;
     if (!p?.handle || (p.variants || []).every((v) => have.has(String(v.id)))) continue;
-    const r = await shop(`${origin}/products/${encodeURIComponent(p.handle)}.json`);
+    const r = await shop(`${origin}/products/${encodeURIComponent(p.handle)}.json`, cookie);
     if (r.status !== 200) { if (r.status === 429) break; continue; }
     try { for (const v of (await r.json())?.product?.variants || []) barcodes[v.id] = v.barcode ?? null; fetched++; } catch {}
   }
