@@ -3,6 +3,8 @@ on:
   schedule:
     - cron: '20 0 * * *'   # main pass, just after the Worker's UTC day rolls over
     - cron: '20 6 * * *'   # picks up anything left / retries
+    - cron: '20 12 * * *'  # extra sweeps: idle in seconds if the day's pass is already complete
+    - cron: '20 18 * * *'
   workflow_dispatch: {}
 permissions: { contents: read }
 jobs:
@@ -27,3 +29,4 @@ jobs:
           SHARD: ${{ matrix.shard }}
           SHARDS: '3'
           GAP_MS: '1000'
+          MAX_PAGES: '200'

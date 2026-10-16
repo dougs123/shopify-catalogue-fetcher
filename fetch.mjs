@@ -36,19 +36,35 @@ export async function run(cfg = {}) {
   }
   const api = (path, init = {}) => fetch(WORKER + path, { ...init, headers: { 'x-ingest-key': KEY, ...(init.headers || {}) } });
 
-  const stats = { stores: 0, ok: 0, other: {}, products: 0 };
+  const stats = { stores: 0, ok: 0, other: {}, products: 0, workErrors: 0 };
   while (Date.now() < deadline - 5 * 60e3) {
     const SHARD = +(process.env.SHARD || 0), OF = +(process.env.SHARDS || 1);
-    const wr = await api(`/ext/work?n=10&shard=${SHARD}&of=${OF}`);
-    if (!wr.ok) throw new Error(`work ${wr.status} ${await wr.text()}`);
+    let wr, workErr = 0;
+    try { wr = await api(`/ext/work?n=10&shard=${SHARD}&of=${OF}`); } catch (e) { wr = { ok: false, status: 0, text: async () => String(e) }; }
+    if (!wr.ok) {
+      log(`work call failed ${wr.status} ${(await wr.text()).slice(0, 200)}`);
+      if (++stats.workErrors > 20) break;
+      await sleep(30000); continue;
+    }
     const { date, work, barcode_cap: cap } = await wr.json();
     if (!work.length) { log('no work left for', date); break; }
     for (const w of work) {
       if (Date.now() > deadline - 2 * 60e3) break;
-      const res = await fetchStore(w, cap, { shop, MAX_PAGES, log, deadline });
-      const payload = { date, host: w.host, ...res };
-      const pr = await api('/ext/ingest', { method: 'POST', headers: { 'content-type': 'application/gzip' }, body: gzipSync(Buffer.from(JSON.stringify(payload))) });
-      const out = pr.ok ? await pr.json() : { status: 'ingest_failed', error: await pr.text() };
+      let out;
+      try {
+        let res;
+        try { res = await fetchStore(w, cap, { shop, MAX_PAGES, log, deadline }); }
+        catch (e) { res = { status: 'retry', error: 'fetcher: ' + String(e).slice(0, 200) }; }
+        const payload = { date, host: w.host, ...slim(res) };
+        const body = gzipSync(Buffer.from(JSON.stringify(payload)));
+        let pr;
+        for (let t = 0; t < 3; t++) {
+          try { pr = await api('/ext/ingest', { method: 'POST', headers: { 'content-type': 'application/gzip' }, body }); if (pr.status < 500) break; }
+          catch (e) { pr = { ok: false, status: 0, text: async () => String(e) }; }
+          await sleep(5000 * (t + 1));
+        }
+        out = pr.ok ? await pr.json() : { status: 'ingest_failed', error: `${pr.status} ${(await pr.text()).slice(0, 200)} (${(body.length / 1048576).toFixed(1)}MB)` };
+      } catch (e) { out = { status: 'crash_skipped', error: String(e).slice(0, 200) }; }
       stats.stores++; stats.products += out.products || 0;
       if (out.status === 'ok') stats.ok++; else stats.other[out.status] = (stats.other[out.status] || 0) + 1;
       log(`${w.host}: ${out.status} products=${out.products || 0} gtins=${out.gtins || 0}${out.error ? ' ' + out.error : ''}`);
@@ -56,6 +72,20 @@ export async function run(cfg = {}) {
   }
   log('done', JSON.stringify(stats));
   return stats;
+}
+
+// Trim the raw catalogue to what the Worker actually stores, so 20k+ product stores stay well under
+// the Worker's request-size limit.
+export function slim(res) {
+  if (!res || !Array.isArray(res.products)) return res;
+  return { ...res, products: res.products.map((p) => ({
+    id: p.id, title: p.title, handle: p.handle, vendor: p.vendor, product_type: p.product_type, tags: p.tags,
+    body_html: typeof p.body_html === 'string' ? p.body_html.slice(0, 6000) : p.body_html,
+    created_at: p.created_at, updated_at: p.updated_at, published_at: p.published_at,
+    options: p.options, images: (p.images || []).slice(0, 10).map((i) => ({ src: i.src })),
+    variants: (p.variants || []).map((v) => ({ id: v.id, sku: v.sku, title: v.title, option1: v.option1, option2: v.option2,
+      option3: v.option3, price: v.price, compare_at_price: v.compare_at_price, available: v.available, grams: v.grams })),
+  })) };
 }
 
 export async function fetchStore(w, cap, { shop, MAX_PAGES = 80, log = () => {}, deadline = Infinity }) {
