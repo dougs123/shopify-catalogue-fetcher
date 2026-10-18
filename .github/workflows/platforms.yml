@@ -1,0 +1,30 @@
+name: nightly-commerce-platforms
+on:
+  schedule:
+    - cron: '10 3 * * *'
+    - cron: '10 9 * * *'
+    - cron: '10 15 * * *'
+    - cron: '10 21 * * *'
+  workflow_dispatch: {}
+permissions: { contents: read }
+jobs:
+  capture:
+    strategy:
+      fail-fast: false
+      matrix: { shard: [0, 1, 2] }
+    concurrency:
+      group: "commerce-platforms-${{ matrix.shard }}"
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm test
+      - run: node commerce.mjs
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          INGEST_KEY: ${{ secrets.INGEST_KEY }}
+          MAX_MINUTES: '330'
+          SHARD: ${{ matrix.shard }}

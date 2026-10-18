@@ -56,3 +56,36 @@ stores remain disabled. Property sites are unchanged.
 Use a manual run with `discovery_only=true` to check onboarding without starting another
 full catalogue sweep. Discovery failure remains visible in the workflow while existing
 catalogue collection can continue.
+
+## Ten-platform catalogue ingestion
+
+`platforms.mjs` contains adapters for Shopify, WooCommerce, Magento/Adobe Commerce,
+BigCommerce, PrestaShop, Shopware, Squarespace Commerce, Wix Stores, Salesforce Commerce
+Cloud and OpenCart. These are ten major supported platforms, not a claimed global ranking.
+WooCommerce uses its public Store API where available. Other storefront adapters follow
+published product sitemaps and extract explicit product/variant structured data. Shopify
+keeps its existing full-catalogue scraper; its R2 captures are imported without fetching
+those stores twice. Restricted platform administration APIs require merchant credentials
+and are not used by these public-page adapters.
+
+The separate `nightly-commerce-platforms` workflow starts at 03:10 UTC with sweeps at
+09:10,15:10,21:10 UTC. Three disjoint merchant shards refresh the current joined Awin list,
+identify platforms, capture product facts, prices, currency, availability and identifiers,
+and publish validated compressed feeds into R2. Large storefronts retain crawl cursors
+and continue on later sweeps. Robots exclusions, crawl delays and inaccessible responses
+are respected. Failed or incomplete requests preserve prior valid records and real dates.
+
+Raw captures retain useful product descriptions, images and attributes. Serving feeds
+require an exact valid GTIN, explicit price currency and availability, a current approved
+merchant relationship and a matching programme market. Unknown/range/ambiguous variants
+remain held. Original source dates and actual offer expiry survive; rebuilding a feed
+does not manufacture a fresh price check. Explicit unavailable records supersede older
+observations within their merchant/product feed. No price-age-only expiry is added.
+
+The shared catalogue freezes each commerce manifest alongside the Awin source release,
+checks every compressed feed's checksum/count, and applies its existing rights, market,
+identity and route rules. Existing comparison readers and the specialist projections can
+then consume those admitted records through their normal refreshes. This does not claim
+that every public page has already refreshed or that Google has indexed it. Property sites
+and property ingestion remain excluded. Full native graphs, credentials and inventories
+stay in private Cloudflare/R2 storage; only authored code and aggregate receipts go in Git.
