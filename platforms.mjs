@@ -54,12 +54,21 @@ export async function identify(host,client){const r=await client.get(`https://${
 export async function crawlStore(host,platform,cursor,client,{maxPages=60,deadline=Infinity}={}){
  if(!PLATFORMS[platform])throw Error('Unsupported platform');const records=[],state=structuredClone(cursor||{});let requests=0,complete=false;
  if(platform==='woocommerce'&&state.mode!=='sitemap'){
- let page=state.page||1;
- try{while(requests<maxPages&&Date.now()<deadline-30000){const apiUrl=`https://${host}/wp-json/wc/store/v1/products?per_page=100&page=${page}`;if(!client.allowed(apiUrl)){state.mode='sitemap';break;}const r=await client.get(apiUrl);requests++;
- if(!r.response.ok){await r.response.body?.cancel();if(requests===1&&[401,403,404].includes(r.response.status)){state.mode='sitemap';break;}throw Error('Catalogue HTTP '+r.response.status);}
- let rows;try{rows=JSON.parse(await readBounded(r.response));}catch{throw Error('Invalid WooCommerce catalogue JSON');}if(!Array.isArray(rows))throw Error('Invalid WooCommerce catalogue shape');records.push(...wooProducts(rows,host,new Date().toISOString()));page++;if(rows.length<100||(Number(r.response.headers.get('x-wp-totalpages'))>0&&page>Number(r.response.headers.get('x-wp-totalpages')))){complete=true;break;}}}catch(e){return {records,cursor:{...state,page},complete:false,requests,error:String(e.message||e)};}
- if(state.mode!=='sitemap')return {records,cursor:complete?{}:{page},complete,requests};
+ state.page??=1;state.enrich??=[];
+ try{while(requests<maxPages&&Date.now()<deadline-30000){
+ if(state.enrich.length){const base=state.enrich[0];if(!client.allowed(base.url)){state.enrich.shift();continue;}const r=await client.get(base.url);requests++;
+ if([401,403,404,410].includes(r.response.status)){await r.response.body?.cancel();state.enrich.shift();continue;}if(!r.response.ok){await r.response.body?.cancel();throw Error('WooCommerce product HTTP '+r.response.status);}
+ const extra=extractProducts(await readBounded(r.response),r.url,platform).map(p=>p.sku&&p.sku===base.sku?{...p,category:p.category||base.category,brand:p.brand||base.brand,description:p.description||base.description,attributes:[...(base.attributes||[]),...(p.attributes||[])]}:p);records.push(...extra);state.enrich.shift();continue;}
+ if(state.apiDone){complete=true;break;}
+ const apiUrl=`https://${host}/wp-json/wc/store/v1/products?per_page=100&page=${state.page}`;if(!client.allowed(apiUrl)){state.mode='sitemap';break;}const r=await client.get(apiUrl);requests++;
+ if(!r.response.ok){await r.response.body?.cancel();if(state.page===1&&[401,403,404].includes(r.response.status)){state.mode='sitemap';break;}throw Error('Catalogue HTTP '+r.response.status);}
+ let rows;try{rows=JSON.parse(await readBounded(r.response));}catch{throw Error('Invalid WooCommerce catalogue JSON');}if(!Array.isArray(rows))throw Error('Invalid WooCommerce catalogue shape');const base=wooProducts(rows,host,new Date().toISOString());records.push(...base);state.page++;
+ state.apiDone=rows.length<100||(Number(r.response.headers.get('x-wp-totalpages'))>0&&state.page>Number(r.response.headers.get('x-wp-totalpages')));
+ state.enrich=base.filter(p=>(!p.gtin||p.ambiguous)&&p.url&&sameStore(p.url,host));}
+ }catch(e){return {records,cursor:state,complete:false,requests,error:String(e.message||e)};}
+ if(state.mode!=='sitemap')return {records,cursor:complete?{}:state,complete,requests};
  }
+
  state.maps??=[...client.robotText.matchAll(/^sitemap:\s*(.+)$/gim)].map(m=>m[1].trim()).filter(u=>sameStore(u,host));if(!state.maps.length&&!state.initialised)state.maps=PLATFORMS[platform].maps.map(p=>`https://${host}${p}`);state.initialised=true;state.urls??=[];state.seenMaps??=[];state.seenUrls??=[];state.blockedUrls??=[];
  const seenMaps=new Set(state.seenMaps),seenUrls=new Set(state.seenUrls);
  let error=null;try{while(requests<maxPages&&Date.now()<deadline-30000){

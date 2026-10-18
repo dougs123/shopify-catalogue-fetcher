@@ -16,7 +16,7 @@ export async function runCommerce(cfg={}){
  if(merchant.platform&&merchant.platform!==platform)cursor={};const capture=await crawlStore(merchant.host,platform,cursor,client,{maxPages:120,deadline});
  for(let i=0;i<capture.records.length;i+=250){const result=await api('capture',{host:merchant.host,platform,records:capture.records.slice(i,i+250)});stats.captured+=result.captured;stats.accepted+=result.accepted;stats.held+=result.held;}
  await api('finish',{host:merchant.host,platform,cursor:capture.cursor,complete:capture.complete,error:capture.error});stats.stores++;if(stats.accepted>0&&(!stats.firstPublication||stats.stores%10===0)){await api('publish',{});stats.firstPublication=true;}
- }catch(error){stats.retry++;await api('finish',{host:merchant.host,platform,cursor,error:String(error.message||error).slice(0,250)});log('Merchant capture held',merchant.host,String(error.message||error).slice(0,150));}}
+ }catch(error){stats.retry++;await api('finish',{host:merchant.host,platform,cursor,error:String(error.message||error).slice(0,250)});log('Merchant capture held',String(error.message||error).slice(0,150));}}
  // Shard zero promotes already-captured Shopify data too, without fetching those stores twice.
  if(shard===0&&Date.now()<deadline-60000)stats.shopifyFinal=await importShopify(api,deadline,log);
  }finally{const publication=await api('publish',{});log('Validated source publication',JSON.stringify(publication));log('Commerce totals',JSON.stringify(stats));}
