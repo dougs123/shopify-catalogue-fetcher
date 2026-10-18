@@ -32,3 +32,27 @@ represented as newly checked merely because the summary was rebuilt.
 
 Run `npm test` before publishing changes. Credentials stay in GitHub Actions secrets;
 no catalogue records or credentials belong in this repository.
+
+## Automatic discovery of newly approved Awin merchants
+
+Every scheduled sweep first reads the current joined Awin merchant list through a
+private Cloudflare service binding. The existing importer keeps its API credential;
+it is never copied into this repository or sent to the runner. Discovery includes
+approved merchants without product feeds and deduplicates their storefront domains.
+
+Known Shopify stores reuse their verified platform identity. New domains are checked
+for Shopify storefront globals or headers. Shopify CDN images alone require a matching
+product catalogue response. Confirmed stores are automatically enrolled in the existing
+catalogue queue with their approved Awin relationships. Their shop base currency is
+checked by the scraper; it is not inferred from the merchant's Awin commission currency.
+
+Discovery runs before the three catalogue shards on the existing nightly/retry schedule.
+The first inventory pass may span several sweeps; newly seen domains are prioritised
+before the remaining initial backlog. Unavailable/challenged stores retry, while negative
+platform results are rechecked periodically or when a new merchant approval changes the
+domain's relationships. No unavailable retailer response is bypassed. Existing disabled
+stores remain disabled. Property sites are unchanged.
+
+Use a manual run with `discovery_only=true` to check onboarding without starting another
+full catalogue sweep. Discovery failure remains visible in the workflow while existing
+catalogue collection can continue.

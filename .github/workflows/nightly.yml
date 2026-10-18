@@ -5,10 +5,33 @@ on:
     - cron: '20 6 * * *'   # picks up anything left / retries
     - cron: '20 12 * * *'  # extra sweeps: idle in seconds if the day's pass is already complete
     - cron: '20 18 * * *'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      discovery_only:
+        description: 'Run merchant discovery without starting another catalogue sweep'
+        type: boolean
+        default: false
 permissions: { contents: read }
 jobs:
+  discover:
+    concurrency:
+      group: shopify-merchant-discovery
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 85
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm test
+      - run: node discover.mjs
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          INGEST_KEY: ${{ secrets.INGEST_KEY }}
+          DISCOVERY_MINUTES: '70'
   fetch:
+    needs: discover
+    if: ${{ always() && !cancelled() && inputs.discovery_only != true }}
     # 3 parallel runners = 3 separate IPs, each paced at 1 req/s; the Worker hands each its own
     # slice of merchants (rowid % 3), so nothing is fetched twice.
     strategy:

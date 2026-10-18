@@ -1,0 +1,11 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import{detectStore,safeUrl}from'./discover.mjs';
+const html=(body,headers={})=>new Response(body,{headers:{'content-type':'text/html',...headers}});
+test('Shopify global confirms platform',async()=>assert.equal((await detectStore('example.com',{get:async()=>html('<script>Shopify.shop = "store.myshopify.com";</script>')})).status,'shopify'));
+test('Shopify header confirms platform',async()=>assert.equal((await detectStore('example.com',{get:async()=>html('store',{'x-shopid':'123'})})).status,'shopify'));
+test('Shopify CDN alone needs product confirmation',async()=>{const responses=[html('<img src="https://cdn.shopify.com/image.jpg">'),Response.json({products:[{id:1,handle:'item',variants:[]}]})];const r=await detectStore('example.com',{get:async()=>responses.shift()});assert.equal(r.status,'shopify');assert.deepEqual(r.signals,['shopify_catalogue']);});
+test('CDN images do not misclassify other platforms',async()=>{const responses=[html('<img src="https://cdn.shopify.com/image.jpg">'),Response.json({products:[]})];assert.equal((await detectStore('example.com',{get:async()=>responses.shift()})).status,'not_shopify');});
+test('ordinary non-Shopify storefront stays excluded',async()=>assert.equal((await detectStore('example.com',{get:async()=>html('WooCommerce store')})).status,'not_shopify'));
+test('blocked merchants retry without being enrolled',async()=>assert.equal((await detectStore('example.com',{get:async()=>new Response('',{status:403})})).status,'retry'));
+test('challenge pages retry',async()=>assert.equal((await detectStore('example.com',{get:async()=>html('Just a moment cf-chl-')})).status,'retry'));
+test('private or invalid URL targets rejected',()=>{for(const url of ['http://example.com','https://127.0.0.1','https://localhost','https://metadata.internal','https://user:pass@example.com'])assert.throws(()=>safeUrl(url));});
+test('redirects cannot move checks to private targets',async()=>assert.equal((await detectStore('example.com',{get:async()=>new Response('',{status:302,headers:{location:'http://127.0.0.1'}})})).status,'retry'));
