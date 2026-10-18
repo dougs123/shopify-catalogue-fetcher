@@ -34,7 +34,7 @@ export async function run(cfg = {}) {
       return r;
     }
   }
-  const api = (path, init = {}) => fetch(WORKER + path, { ...init, headers: { 'x-ingest-key': KEY, ...(init.headers || {}) } });
+  const api = (path, init = {}) => fetch(WORKER + path, { signal:AbortSignal.timeout(120000), ...init, headers: { 'x-ingest-key': KEY, ...(init.headers || {}) } });
 
   const stats = { stores: 0, ok: 0, other: {}, products: 0, workErrors: 0 };
   while (Date.now() < deadline - 5 * 60e3) {
@@ -71,6 +71,7 @@ export async function run(cfg = {}) {
     }
   }
   log('done', JSON.stringify(stats));
+  if (stats.workErrors > 20 || stats.other.ingest_failed || stats.other.crash_skipped) throw new Error('Catalogue transport failed: inspect runner totals');
   return stats;
 }
 
@@ -101,18 +102,20 @@ export async function fetchStore(w, cap, { shop, MAX_PAGES = 80, log = () => {},
     const r = await shop(`${origin}/products.json?limit=250&page=${page}`, cookie);
     http = r.status;
     if (r.status === 429 || r.status >= 500 || r.status === 0) return { status: 'retry', http, pages: page - 1, error: `HTTP ${r.status} on page ${page}`, currency, country };
-    if (r.status >= 400) { if (page === 1) return { status: 'blocked', http, error: `HTTP ${r.status}`, currency, country }; break; }
+    if (r.status >= 400) return { status: page === 1 ? 'blocked' : 'retry', http, pages:page-1, complete:false, error:`HTTP ${r.status} on page ${page}; last complete catalogue retained`, currency, country };
     let body = null;
     try { body = (r.headers.get('content-type') || '').includes('json') ? await r.json() : null; } catch {}
-    if (!body || !Array.isArray(body.products)) { if (page === 1) return { status: 'not_json', http, error: 'not JSON', currency, country }; break; }
+    if (!body || !Array.isArray(body.products)) return { status:page===1?'not_json':'retry',http,pages:page-1,complete:false,error:'Invalid catalogue page; last complete catalogue retained',currency,country };
     products.push(...body.products);
-    if (body.products.length < 250 || Date.now() > deadline - 60e3) break;
+    if (body.products.length < 250) break;
+    if (Date.now() > deadline - 60e3 || page === MAX_PAGES) return {status:'retry',http,pages:page,complete:false,error:'Catalogue incomplete at time/page limit; last complete catalogue retained',currency,country};
   }
   if (!products.length) {
     // Shopify sometimes serves an empty list to suspected bots; meta.json tells us the truth.
     if (published > 0) return { status: 'soft_block', http, pages: page, error: `0 returned, meta says ${published}`, currency, country };
     return { status: 'empty', http, pages: page, currency, country };
   }
+  const fetchedAt = new Date().toISOString();
   // barcodes: only variants not already cached, capped per store per night
   const have = new Set((w.have_barcodes || []).map(String));
   const barcodes = {}; let fetched = 0;
@@ -123,7 +126,7 @@ export async function fetchStore(w, cap, { shop, MAX_PAGES = 80, log = () => {},
     if (r.status !== 200) { if (r.status === 429) break; continue; }
     try { for (const v of (await r.json())?.product?.variants || []) barcodes[v.id] = v.barcode ?? null; fetched++; } catch {}
   }
-  return { status: 'ok', origin, products, currency, country, barcodes, gtin_fetched: fetched, pages: page, http, market_pinned: !!cookie };
+  return { status: 'ok', origin, products, currency, country, barcodes, gtin_fetched: fetched, pages: page, http, market_pinned: !!cookie, complete:true, fetched_at:fetchedAt };
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
