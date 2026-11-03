@@ -1,0 +1,26 @@
+name: Recover retained Shopify catalogue
+on:
+  workflow_dispatch:
+    inputs:
+      receipt_key:
+        description: 'Private R2 receipt for an approved, retained catalogue submission'
+        required: true
+        type: string
+permissions: { contents: read }
+concurrency:
+  group: shopify-retained-catalogue-recovery
+  cancel-in-progress: false
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm test
+      - run: node replay.mjs
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          INGEST_KEY: ${{ secrets.INGEST_KEY }}
+          REPLAY_RECEIPT: ${{ inputs.receipt_key }}
