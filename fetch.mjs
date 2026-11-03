@@ -29,6 +29,7 @@ export async function run(cfg = {}) {
       catch (e) { if (attempt < 2) { await sleep(5000); continue; } return { status: 0, error: String(e) }; }
       if ((r.status === 429 || r.status >= 500) && attempt < 3) {
         const ra = Math.min(Math.max(+(r.headers.get('retry-after') || 0), 30 * (attempt + 1)), 300);
+        await r.body?.cancel();
         log(`  ${r.status} ${url} — backing off ${ra}s`); await sleep(ra * 1000); nextAt = Date.now() + GAP; continue;
       }
       return r;
@@ -96,8 +97,13 @@ export async function fetchStore(w, cap, { shop, MAX_PAGES = 80, log = () => {},
     try { const mj = await m.json(); currency = mj.currency || currency; country = mj.country || null; published = mj.published_products_count ?? null; } catch {}
     try { origin = new URL(m.url).origin; } catch {}
   }
+  const reportedCount = Number(published);
+  const expected = published !== null && published !== '' && Number.isSafeInteger(reportedCount) && reportedCount >= 0 ? reportedCount : null;
+  // The storefront endpoint cannot paginate beyond 25,000 products. Raising MAX_PAGES does not help.
+  const sourceLimit = (pages) => ({status:'source_limit',http:200,pages,complete:false,error:'Shopify storefront limit of 25000 products; complete approved feed required; last complete catalogue retained',currency,country});
+  if (expected > 25000) return sourceLimit(0);
   const cookie = country && currency ? `localization=${country}; cart_currency=${currency}` : undefined;
-  const products = []; let page = 1, http = null;
+  const products = [], seen = new Set(); let page = 1, http = null;
   for (; page <= MAX_PAGES; page++) {
     const r = await shop(`${origin}/products.json?limit=250&page=${page}`, cookie);
     http = r.status;
@@ -106,10 +112,17 @@ export async function fetchStore(w, cap, { shop, MAX_PAGES = 80, log = () => {},
     let body = null;
     try { body = (r.headers.get('content-type') || '').includes('json') ? await r.json() : null; } catch {}
     if (!body || !Array.isArray(body.products)) return { status:page===1?'not_json':'retry',http,pages:page-1,complete:false,error:'Invalid catalogue page; last complete catalogue retained',currency,country };
+    for (const product of body.products) {
+      const id = String(product?.id ?? '');
+      if (!/^[1-9][0-9]*$/.test(id) || seen.has(id)) return {status:'retry',http,pages:page,complete:false,error:'Invalid or repeated product ID; last complete catalogue retained',currency,country};
+      seen.add(id);
+    }
     products.push(...body.products);
-    if (body.products.length < 250) break;
+    if (body.products.length < 250 || (expected !== null && products.length === expected)) break;
+    if (page >= 100) return sourceLimit(page);
     if (Date.now() > deadline - 60e3 || page === MAX_PAGES) return {status:'retry',http,pages:page,complete:false,error:'Catalogue incomplete at time/page limit; last complete catalogue retained',currency,country};
   }
+  if (products.length && expected !== null && products.length !== expected) return {status:'retry',http,pages:page,complete:false,error:`Catalogue count mismatch: received ${products.length}, metadata reports ${expected}; last complete catalogue retained`,currency,country};
   if (!products.length) {
     // Shopify sometimes serves an empty list to suspected bots; meta.json tells us the truth.
     if (published > 0) return { status: 'soft_block', http, pages: page, error: `0 returned, meta says ${published}`, currency, country };
