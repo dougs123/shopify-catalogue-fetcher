@@ -89,3 +89,7 @@ then consume those admitted records through their normal refreshes. This does no
 that every public page has already refreshed or that Google has indexed it. Property sites
 and property ingestion remain excluded. Full native graphs, credentials and inventories
 stay in private Cloudflare/R2 storage; only authored code and aggregate receipts go in Git.
+
+Catalogue completeness: the public storefront endpoint stops at 25,000 products. A metadata count above that limit is recorded as `source_limit` without downloading pages; a complete approved source is needed for recovery. Unknown-count catalogues stop at page 100, and duplicate IDs or mismatched exact counts retain the previous complete catalogue.
+
+For a controlled repair, `catalogue_only: true` checks/loads the current approved roster and skips probing new merchant sites. It does not change schedules, source approval, retry budgets or request pacing.

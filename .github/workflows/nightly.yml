@@ -11,6 +11,10 @@ on:
         description: 'Run merchant discovery without starting another catalogue sweep'
         type: boolean
         default: false
+      catalogue_only:
+        description: 'Use the current approved roster without probing new merchant sites'
+        type: boolean
+        default: false
 permissions: { contents: read }
 jobs:
   discover:
@@ -28,7 +32,7 @@ jobs:
         env:
           WORKER_URL: ${{ vars.WORKER_URL }}
           INGEST_KEY: ${{ secrets.INGEST_KEY }}
-          DISCOVERY_MINUTES: '70'
+          DISCOVERY_MINUTES: ${{ inputs.catalogue_only == true && '0' || '70' }}
   fetch:
     needs: discover
     if: ${{ always() && !cancelled() && inputs.discovery_only != true }}
