@@ -64,7 +64,7 @@ export async function run(cfg = {}) {
           catch (e) { pr = { ok: false, status: 0, text: async () => String(e) }; }
           await sleep(5000 * (t + 1));
         }
-        out = pr.ok ? await pr.json() : { status: 'ingest_failed', error: `${pr.status} ${(await pr.text()).slice(0, 200)} (${(body.length / 1048576).toFixed(1)}MB)` };
+        out = await ingestResult(pr, {api,date,host:w.host,bytes:body.length});
       } catch (e) { out = { status: 'crash_skipped', error: String(e).slice(0, 200) }; }
       stats.stores++; stats.products += out.products || 0;
       if (out.status === 'ok') stats.ok++; else stats.other[out.status] = (stats.other[out.status] || 0) + 1;
@@ -74,6 +74,26 @@ export async function run(cfg = {}) {
   log('done', JSON.stringify(stats));
   if (stats.workErrors > 20 || stats.other.ingest_failed || stats.other.crash_skipped) throw new Error('Catalogue transport failed: inspect runner totals');
   return stats;
+}
+
+// A rejected oversized capture must not leave the claimed job falsely running.
+// Report a small terminal receipt; never upload the rejected catalogue again here.
+export async function ingestResult(response, {api,date,host,bytes}) {
+  if (response.ok) return response.json();
+  const detail = await response.text();
+  const failure = {status:'ingest_failed',error:`${response.status} ${detail.slice(0,200)} (${(bytes/1048576).toFixed(1)}MB)`};
+  if (response.status !== 413) return failure;
+  let rejected;
+  try { rejected = JSON.parse(detail); } catch { return failure; }
+  // Only finalise known application budget rejections with durable raw evidence.
+  if (typeof rejected.rawKey !== 'string' || !/^datafeeds\/shopify\/submissions\/[0-9-]+\/[a-f0-9-]+\.json(?:\.gz)?$/.test(rejected.rawKey)) return failure;
+  const error = `Import processing allowance exceeded; previous catalogue retained; raw retained at ${rejected.rawKey}`;
+  try {
+    const receipt = await api('/ext/ingest',{method:'POST',headers:{'content-type':'application/gzip'},body:gzipSync(Buffer.from(JSON.stringify({date,host,status:'held',complete:false,http:413,error})))});
+    if (!receipt.ok) { await receipt.body?.cancel(); return failure; }
+    const recorded = await receipt.json();
+    return recorded.status === 'held' ? recorded : failure;
+  } catch { return failure; }
 }
 
 // Trim the raw catalogue to what the Worker actually stores, so 20k+ product stores stay well under
